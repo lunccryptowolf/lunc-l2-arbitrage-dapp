@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+/**
+ * @title LUNCArbitrageDApp
+ * @dev A smart contract for LUNC L2 arbitrage opportunities
+ */
+contract LUNCArbitrageDApp is Ownable, ReentrancyGuard {
+    // Token address for LUNC on L2
+    address public luncToken;
+    
+    // Fee structure (in basis points, 100 = 1%)
+    uint256 public platformFee = 30; // 0.3% fee
+    uint256 public constant MAX_FEE = 100; // Max 1% fee
+    
+    // Minimum profit threshold to execute arbitrage (in basis points)
+    uint256 public minProfitThreshold = 50; // 0.5%
+    
+    // Mapping to track user deposits
+    mapping(address => uint256) public userDeposits;
+    
+    // Total volume tracked
+    uint256 public totalVolumeProcessed;
+    
+    // Arbitrage pools info
+    struct ArbitragePool {
+        string name;
+        address poolAddress;
+        bool isActive;
+    }
+    
+    // Array of arbitrage pools
+    ArbitragePool[] public arbitragePools;
+    
+    // Events
+    event Deposited(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+    event ArbitrageExecuted(address indexed user, uint256 profit, uint256 fee);
+    event ArbitragePoolAdded(string name, address poolAddress);
+    event ArbitragePoolDeactivated(string name, address poolAddress);
+    
+    /**
+     * @dev Constructor initializes the contract with the LUNC token address
+     * @param _luncToken Address of the LUNC token on L2
+     */
+    constructor(address _luncToken) {
+        require(_luncToken != address(0), "Invalid token address");
+        luncToken = _luncToken;
+    }
+    
+    /**
+     * @dev Allows users to deposit LUNC for automated arbitrage
+     * @param amount The amount of LUNC to deposit
+     */
+    function deposit(uint256 amount) external nonReentrant {
+        require(amount > 0, "Amount must be greater than 0");
+        
+        IERC20(luncToken).transferFrom(msg.sender, address(this), amount);
+        userDeposits[msg.sender] += amount;
+        
+        emit Deposited(msg.sender, amount);
+    }
+    
+    /**
+     * @dev Allows users to withdraw their deposited LUNC
+     * @param amount The amount of LUNC to withdraw
+     */
+    function withdraw(uint256 amount) external nonReentrant {
+        require(amount > 0, "Amount must be greater than 0");
+        require(userDeposits[msg.sender] >= amount, "Insufficient balance");
+        
+        userDeposits[msg.sender] -= amount;
+        IERC20(luncToken).transfer(msg.sender, amount);
+        
+        emit Withdrawn(msg.sender, amount);
+    }
+    
+    /**
+     * @dev Execute arbitrage opportunity
+     * @param poolIndexFrom Index of the source pool
+     * @param poolIndexTo Index of the destination pool
+     * @param amount Amount of LUNC to use for arbitrage
+     */
+    function executeArbitrage(uint256 poolIndexFrom, uint256 poolIndexTo, uint256 amount) 
+        external 
+        nonReentrant 
+        returns (uint256 profit) 
+    {
+        require(poolIndexFrom < arbitragePools.length, "Invalid source pool");
+        require(poolIndexTo < arbitragePools.length, "Invalid destination pool");
+        require(poolIndexFrom != poolIndexTo, "Source and destination must differ");
+        require(arbitragePools[poolIndexFrom].isActive, "Source pool inactive");
+        require(arbitragePools[poolIndexTo].isActive, "Destination pool inactive");
+        require(amount > 0, "Amount must be greater than 0");
+        require(userDeposits[msg.sender] >= amount, "Insufficient balance");
+        
+        // Calculate potential profit (this would integrate with price oracles in production)
+        // Mock implementation for demonstration
+        uint256 potentialProfit = calculateArbitrageProfit(
+            arbitragePools[poolIndexFrom].poolAddress,
+            arbitragePools[poolIndexTo].poolAddress,
+            amount
+        );
+        
+        // Check if profit meets minimum threshold
+        uint256 profitBasisPoints = (potentialProfit * 10000) / amount;
+        require(profitBasisPoints >= minProfitThreshold, "Profit too low");
+        
+        // Execute the arbitrage (in production, this would call external contracts)
+        // For demonstration, we just simulate the profit
+        profit = potentialProfit;
+        
+        // Calculate fee
+        uint256 fee = (profit * platformFee) / 10000;
+        uint256 netProfit = profit - fee;
+        
+        // Update user balance
+        userDeposits[msg.sender] += netProfit;
+        
+        // Update total volume
+        totalVolumeProcessed += amount * 2; // Count both buy and sell
+        
+        emit ArbitrageExecuted(msg.sender, netProfit, fee);
+        
+        return netProfit;
+    }
+    
+    /**
+     * @dev Calculate potential arbitrage profit between two pools
+     * @param poolFrom Address of source pool
+     * @param poolTo Address of destination pool
+     * @param amount Amount to arbitrage
+     * @return profit Estimated profit
+     */
+    function calculateArbitrageProfit(address poolFrom, address poolTo, uint256 amount) 
+        internal 
+        view 
+        returns (uint256) 
+    {
+        // In production, this would query price oracles or pool contracts
+        // Mock implementation for demonstration
+        uint256 mockRate = uint256(uint160(poolFrom) ^ uint160(poolTo)) % 200;
+        return amount * mockRate / 10000;
+    }
+    
+    /**
+     * @dev Add a new arbitrage pool
+     * @param name Name of the pool
+     * @param poolAddress Address of the pool contract
+     */
+    function addArbitragePool(string calldata name, address poolAddress) 
+        external 
+        onlyOwner 
+    {
+        require(poolAddress != address(0), "Invalid pool address");
+        
+        arbitragePools.push(ArbitragePool({
+            name: name,
+            poolAddress: poolAddress,
+            isActive: true
+        }));
+        
+        emit ArbitragePoolAdded(name, poolAddress);
+    }
+    
+    /**
+     * @dev Deactivate an arbitrage pool
+     * @param poolIndex Index of the pool to deactivate
+     */
+    function deactivatePool(uint256 poolIndex) external onlyOwner {
+        require(poolIndex < arbitragePools.length, "Invalid pool index");
+        require(arbitragePools[poolIndex].isActive, "Pool already inactive");
+        
+        arbitragePools[poolIndex].isActive = false;
+        
+        emit ArbitragePoolDeactivated(
+            arbitragePools[poolIndex].name,
+            arbitragePools[poolIndex].poolAddress
+        );
+    }
+    
+    /**
+     * @dev Set the platform fee (owner only)
+     * @param newFee New fee in basis points
+     */
+    function setPlatformFee(uint256 newFee) external onlyOwner {
+        require(newFee <= MAX_FEE, "Fee exceeds maximum");
+        platformFee = newFee;
+    }
+    
+    /**
+     * @dev Set minimum profit threshold for arbitrage execution
+     * @param newThreshold New threshold in basis points
+     */
+    function setMinProfitThreshold(uint256 newThreshold) external onlyOwner {
+        minProfitThreshold = newThreshold;
+    }
+    
+    /**
+     * @dev Get number of registered arbitrage pools
+     * @return count Number of pools
+     */
+    function getArbitragePoolCount() external view returns (uint256) {
+        return arbitragePools.length;
+    }
+    
+    /**
+     * @dev Get user's current profit
+     * @param user Address of the user
+     * @return profit Current profit
+     */
+    function getUserProfit(address user) external view returns (uint256) {
+        // In production, this would calculate actual profit
+        // For demonstration, we just return the deposit
+        return userDeposits[user];
+    }
+}
